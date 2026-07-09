@@ -4,7 +4,7 @@ INSTL_DIR := /usr/local/bin
 CPP := g++
 INCS := -I inc/
 MY_LIBS := -L/usr/lib -lus_http
-LIBS :=
+LIBS := -lcurl -lboost_json
 CPPFLAGS := --std=c++20 -pipe # -Wall -Werror
 BUILD_DIR = build
 $(shell mkdir -p $(BUILD_DIR))
