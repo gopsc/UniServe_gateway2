@@ -9,7 +9,7 @@ void registerRoutes(HttpServer &server);
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params);
-
+bool is_special_header(const std::string &header);
 int main() {
 	HttpServer server("0.0.0.0", 9201, 4);
 	registerRoutes(server);
@@ -26,7 +26,8 @@ void registerRoutes(HttpServer &server) {
 	});
 }
 
-/* {"url": "https://www.baidu.com", "method": "get", "payload": ""} */
+/* {"url": "https://www.baidu.com", "method": "get"} */
+/* {"url": "https://www.baidu.com", "method": "post", "payload": ""} */
 http::response<http::string_body> handleProxy(
 	const http::request<http::string_body>& req,
 	const std::unordered_map<std::string, std::string>& params) {
@@ -41,20 +42,30 @@ http::response<http::string_body> handleProxy(
 		auto& obj = jv.as_object();
 		std::string url = json::value_to<std::string>(obj.at("url"));
 		std::string method = json::value_to<std::string>(obj.at("method"));
-		std::string payload = json::value_to<std::string>(obj.at("payload"));
 
 		auto callback = [&res](const auto& ret) {
-			res.body() += ret;	// TODO: BIG FILE
+			res.body() += ret;	// TODO: too big file
 		};
 
-		auto client = HttpClient();
-		//client.set_header("Content-Type: application/json");
-		client.set_header("Accept: text/html");
-		client.set_header("User-Agent: HttpClient/1.0");
-		client.set_header("Connection: keep-alive");
 
-		if (method == "get") client.get_stream_sync(url, callback);
-		else if (method == "post") client.post_stream_sync(url, payload, callback);
+		auto client = HttpClient();
+		for (auto const& field: req) {
+			if (is_special_header(field.name_string()))
+				continue;
+			auto h = std::string();
+			h += field.name_string();
+			h += ": ";
+			h += field.value();
+			client.set_header(h);	// FIXME: Content-Type should changed
+		}
+
+		if (method == "get")
+			client.get_stream_sync(url, callback);
+	
+		else if (method == "post") {
+			std::string payload = json::value_to<std::string>(obj.at("payload"));
+			client.post_stream_sync(url, payload, callback);
+		}
 
 		for (const auto& pair: client.get_response_headers() ) {
 			res.set(pair.first, pair.second);
@@ -75,3 +86,8 @@ http::response<http::string_body> handleProxy(
 	return res;
 }
 
+bool is_special_header(const std::string &header) {
+
+	return header == "Content-Type" || header == "Content-Length"
+		|| header == "Host";
+}
