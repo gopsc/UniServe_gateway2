@@ -23,6 +23,7 @@ bool is_special_header(const std::string &header);
 
 static std::string	_ADDR;
 static int		_PORT;
+static std::string	_DEFT_PATH;
 int main(int argc, char **argv) {
 	po::options_description desc("cpp language web gateway");
 	desc.add_options()
@@ -60,6 +61,7 @@ int main(int argc, char **argv) {
 			ConfIni cf(vm["input"].as<std::string>());
 			_ADDR = cf.get<std::string>("Server.address", "");
 			_PORT = cf.get<int> ("Server.port", -1);
+			_DEFT_PATH = cf.get<std::string>("Proxy.default", "");
 		}
 		catch (ConfIni::IniConfigureFileParseException &e) {
 			std::cerr << "ERROR: "  << e.what() << std::endl;
@@ -83,12 +85,12 @@ int main(int argc, char **argv) {
 void registerRoutes(HttpServer &server) {
 
 	/* fixme: use origin target httppath */
-	server.get("/proxy", [](const auto& req, const auto& params) {
+	server.get("*", [](const auto& req, const auto& params) {
 		HttpServer::debug::print_all_header_fields(req);
 		return handleProxy(req, params, "get");
 	});
 
-	server.post("/proxy", [](const auto& req, const auto& params) {
+	server.post("*", [](const auto& req, const auto& params) {
 		HttpServer::debug::print_all_header_fields(req);
 		return handleProxy(req, params, "post");
 	});
@@ -105,11 +107,28 @@ http::response<http::string_body> handleProxy(
 
 	try {
 
-		std::string url = req["Target-Url"];
+		std::string url;
+
+		auto it = req.base().find("Target-Url");
+		if (it == req.base().end()) {
+			url = "";
+		}
+		else {
+			std::string url = req["Target-Url"];
+		}
+
+		if (url == "") {
+			url =  _DEFT_PATH;
+		}
+
+		url += req.target();
 
 		auto callback = [&res](const auto& ret) {
 			res.body() += ret;	// TODO: too big file
 		};
+
+
+		std::cout << req.target() << std::endl;
 
 
 		auto client = HttpClient();
@@ -137,6 +156,7 @@ http::response<http::string_body> handleProxy(
 			res.set(pair.first, pair.second);
 		}
 		res.result(client.get_response_code());
+		std::cout << res.body() << std::endl;
 	}
 	//catch
 
@@ -154,6 +174,6 @@ http::response<http::string_body> handleProxy(
 /* they are special because they point to raw request */
 bool is_special_header(const std::string &header) {
 
-	return header == "Content-Type" || header == "Content-Length"
-		|| header == "Host";
+	return  header == "Host" || header == "connection"
+		|| header == "Accept-Encoding";
 }
