@@ -3,17 +3,75 @@
 #include <iostream>
 #include <typeinfo>
 #include <boost/json.hpp>
+#include <boost/program_options.hpp>
+#include "Conf.hpp"
 using namespace pmc::net;
+using namespace qing;
 namespace json = boost::json;
+namespace po = boost::program_options;
+constexpr const char *_VER = "0.2.0";
 void registerRoutes(HttpServer &server);
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params);
 bool is_special_header(const std::string &header);
-int main() {
-	HttpServer server("0.0.0.0", 9201, 4);
+
+
+static std::string	_ADDR;
+static int		_PORT;
+int main(int argc, char **argv) {
+	po::options_description desc("cpp language web gateway");
+	desc.add_options()
+		("help,h",					"output help message")
+		("version,v",					"output version message")
+		("input,i", 	po::value<std::string>(),	"input a configure text file")
+	;
+	po::variables_map vm;
+	{
+		try {
+			po::store(po::parse_command_line(argc, argv, desc), vm);
+			po::notify(vm);
+		}
+
+		catch (const std::exception &e) {
+			std::cerr << "ERROR: "  << e.what() << std::endl;
+			std::cerr << "using --help to check options message" << std::endl;
+			throw e;
+		}
+	}
+
+	if (vm.count("help")) {
+		std::cout << desc << std::endl;
+		return 0;
+	}
+
+	if (!vm.count("input")) {
+		std::cerr << "Please input configure file via -i"  << std::endl;
+		return 0;
+	}
+
+	{
+		try {
+
+			ConfIni cf(vm["input"].as<std::string>());
+			_ADDR = cf.get<std::string>("Server.address", "");
+			_PORT = cf.get<int> ("Server.port", -1);
+		}
+		catch (ConfIni::IniConfigureFileParseException &e) {
+			std::cerr << "ERROR: "  << e.what() << std::endl;
+			std::cerr << "ini format input file error" << std::endl;
+			return 1;
+		}
+	}
+
+	if (_ADDR == "" || _PORT == -1) {
+		std::cerr << "Please setup addree and port in Serve section in configure file";
+		std::cerr << std::endl;
+		return 0;
+	}
+		
+	HttpServer server(_ADDR, _PORT, 4);
 	registerRoutes(server);
-	server.showStatus();
 	server.start();
 	server.run();
 }
