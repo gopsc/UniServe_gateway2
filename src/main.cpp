@@ -125,6 +125,7 @@ http::response<http::string_body> handleProxy(
 
 		auto callback = [&res](const auto& ret) {
 			res.body() += ret;	// TODO: too big file
+			res.body() += "\n";
 		};
 
 
