@@ -16,7 +16,8 @@ constexpr const char *_VER = "0.2.0";
 void registerRoutes(HttpServer &server);
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
-		const std::unordered_map<std::string, std::string>& params);
+		const std::unordered_map<std::string, std::string>& params,
+		const char *method);
 bool is_special_header(const std::string &header);
 
 
@@ -81,29 +82,30 @@ int main(int argc, char **argv) {
 
 void registerRoutes(HttpServer &server) {
 
+	/* fixme: use origin target httppath */
+	server.get("/proxy", [](const auto& req, const auto& params) {
+		HttpServer::debug::print_all_header_fields(req);
+		return handleProxy(req, params, "get");
+	});
+
 	server.post("/proxy", [](const auto& req, const auto& params) {
 		HttpServer::debug::print_all_header_fields(req);
-		return handleProxy(req, params);
+		return handleProxy(req, params, "post");
 	});
 }
 
-/* {"url": "https://www.baidu.com", "method": "get"} */
-/* {"url": "https://www.baidu.com", "method": "post", "payload": ""} */
-/* TODO: or write url to the headers */
+/* curl -H "Target-Url: https://www.baidu.com" http://127.0.0.1:9201 -X GET */
 http::response<http::string_body> handleProxy(
 	const http::request<http::string_body>& req,
-	const std::unordered_map<std::string, std::string>& params) {
+	const std::unordered_map<std::string, std::string>& params,
+	const char *method)
+{
 	http::response<http::string_body> res;
 	res.version(req.version());
 
 	try {
-		// parse URL params, to setup client
-		//...
 
-		auto jv = json::parse(req.body());	// TODO: use error_code
-		auto& obj = jv.as_object();
-		std::string url = json::value_to<std::string>(obj.at("url"));
-		std::string method = json::value_to<std::string>(obj.at("method"));
+		std::string url = req["Target-Url"];
 
 		auto callback = [&res](const auto& ret) {
 			res.body() += ret;	// TODO: too big file
@@ -121,19 +123,20 @@ http::response<http::string_body> handleProxy(
 			client.set_header(h);	// FIXME: Content-Type should changed
 		}
 
+
 		if (method == "get")
 			client.get_stream_sync(url, callback);
 	
 		else if (method == "post") {
-			std::string payload = json::value_to<std::string>(obj.at("payload"));
+			std::string payload = req.body();
 			client.post_stream_sync(url, payload, callback);
 		}
+
 
 		for (const auto& pair: client.get_response_headers() ) {
 			res.set(pair.first, pair.second);
 		}
 		res.result(client.get_response_code());
-		std::cout << client.get_response_code() << std::endl;
 	}
 	//catch
 
