@@ -5,11 +5,14 @@
 #include <boost/json.hpp>
 #include <boost/program_options.hpp>
 #include "Conf.hpp"
+
 using namespace pmc::net;
 using namespace qing;
 namespace json = boost::json;
 namespace po = boost::program_options;
+
 constexpr const char *_VER = "0.2.0";
+
 void registerRoutes(HttpServer &server);
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
@@ -86,6 +89,7 @@ void registerRoutes(HttpServer &server) {
 
 /* {"url": "https://www.baidu.com", "method": "get"} */
 /* {"url": "https://www.baidu.com", "method": "post", "payload": ""} */
+/* TODO: or write url to the headers */
 http::response<http::string_body> handleProxy(
 	const http::request<http::string_body>& req,
 	const std::unordered_map<std::string, std::string>& params) {
@@ -144,6 +148,7 @@ http::response<http::string_body> handleProxy(
 	return res;
 }
 
+/* they are special because they point to raw request */
 bool is_special_header(const std::string &header) {
 
 	return header == "Content-Type" || header == "Content-Length"
