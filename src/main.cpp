@@ -121,15 +121,13 @@ http::response<http::string_body> handleProxy(
 			url =  _DEFT_PATH;
 		}
 
+		url += "/";
 		url += req.target();
 
 		auto callback = [&res](const auto& ret) {
 			res.body() += ret;	// TODO: too big file
-			res.body() += "\n";
+			//res.body() += "\n";
 		};
-
-
-		std::cout << req.target() << std::endl;
 
 
 		auto client = HttpClient();
@@ -157,7 +155,6 @@ http::response<http::string_body> handleProxy(
 			res.set(pair.first, pair.second);
 		}
 		res.result(client.get_response_code());
-		std::cout << res.body() << std::endl;
 	}
 	//catch
 
