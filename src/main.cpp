@@ -91,24 +91,12 @@ int main(int argc, char **argv) {
 	HttpServer server(_ADDR, _PORT, 4);
 	registerRoutes(server);
 
-	OSSL_PROVIDER *legacy = OSSL_PROVIDER_load(NULL, "legacy");
-	if (legacy == NULL) {
-		unsigned long err = ERR_get_error();
-		char err_buf[256];
-		ERR_error_string_n(err, err_buf, sizeof(err_buf));
-		std::cerr << "Failed to load legacy provider: " << err_buf << std::endl;
-		// 可能原因：模块未找到、路径不对、版本不兼容等
-	} else {
-		std::cout << "Legacy provider loaded successfully." << std::endl;
-		// 记住保存 legacy 指针，程序退出前调用 OSSL_PROVIDER_unload(legacy);
-	}
 
 	_KEYGEN = std::make_unique<MyRSA::Generator> ();
 
 	server.start();
 	server.run();
 
-	OSSL_PROVIDER_unload(legacy);
 }
 
 void registerRoutes(HttpServer &server) {
