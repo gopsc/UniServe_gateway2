@@ -29,6 +29,10 @@ http::response<http::string_body> handleProxy(
 http::response<http::string_body> handleLogin(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params);
+http::response<http::string_body> handleRegister(
+		const http::request<http::string_body>& req,
+		const std::unordered_map<std::string, std::string>& params);
+
 
 /**/
 bool is_special_header(const std::string &header);
@@ -118,10 +122,9 @@ int main(int argc, char **argv) {
 	_SQLDB = std::make_unique<Sqlite3> (_DB_PATH);
 
 	db_init();
-
 	registerRoutes(*_SERVE);
-
 	set_signal_action();
+
 	_SERVE->start();
 	_SERVE->run();
 
@@ -172,6 +175,10 @@ void registerRoutes(HttpServer &server) {
 		return handleLogin(req, params);
 	});
 
+	server.post("/register", [](const auto& req, const auto& params) {
+		return handleRegister(req, params);
+	});
+
 	server.get("*", [](const auto& req, const auto& params) {
 		return handleProxy(req, params, "get");
 	});
@@ -190,24 +197,90 @@ http::response<http::string_body> handleLogin(
 	res.version(req.version());
 
 	try {
+		auto jv = json::parse(req.body());
+		if (!jv.is_object()) {
+			throw std::runtime_error("400");
+		}
+		auto& obj = jv.as_object();
+		auto username = std::string(obj.at("username").as_string());
+		auto password = std::string(obj.at("password").as_string());
+
+		auto password_hash = SHA256::sha256(password);
+
+		std::string sql = "SELECT COUNT(*) FROM Users WHERE email=? AND password_hash=?;";
+		auto stmt = _SQLDB->stmt(sql);
+		stmt.bind_text(1, username);
+		stmt.bind_text(2, password_hash);
+		if (stmt.step()) {
+			//update
+		}
+
+		else {
+			throw std::runtime_error("401");
+		}
+
 		auto _PRIV = MyRSA::Private_Key::from_pem(_KEYGEN->get_private_key_pem());
 
-		std::string username = "hello, world";
-		int  created_at = 0;
+
+		//int  created_at = 0;
 		int  keep_time  = 3600;	// second
 
-		json::value jv = {
+		json::value jv_r = {
 			{"user", username},
-			{"created_at", created_at},
+			//{"created_at", created_at},
 			{"keep_time", keep_time}
 		};
 
-		std::string data = json::serialize(jv);
+		std::string data = json::serialize(jv_r);
 		std::string token = Base64::base64_encode(data);
 		std::string sign = _PRIV.Sign(data);
 
 		res.result(http::status::ok);
 		res.body() = token + "_" + sign;
+	}
+	//catch
+
+	catch (const std::exception& e) {
+		const auto& ti = typeid(e);
+		res.set(http::field::content_type, "text/plain");
+		res.result(http::status::internal_server_error);
+		res.body() = std::string("<") + ti.name() + "> " + e.what();
+	}
+
+	res.prepare_payload();
+	return res;
+}
+
+/* curl -X POST http://127.0.0.1:9201/register -d '{"username": "qing", "password": "12345678"}'  */
+/* FIXME: strong password check */
+http::response<http::string_body> handleRegister(
+	const http::request<http::string_body>& req,
+	const std::unordered_map<std::string, std::string>& params)
+{
+	http::response<http::string_body> res;
+	res.version(req.version());
+
+	try {
+
+		auto jv = json::parse(req.body());
+		if (!jv.is_object()) {
+			throw std::runtime_error("400");
+		}
+		auto& obj = jv.as_object();
+		auto username = std::string(obj.at("username").as_string());
+		auto password = std::string(obj.at("password").as_string());
+
+		auto password_hash = SHA256::sha256(password);
+
+		std::string sql = "INSERT INTO Users (email, password_hash, last_login) VALUES (?, ?, datetime('now', 'localtime'));";
+		auto stmt = _SQLDB->stmt(sql);
+		stmt.bind_text(1, username);
+		stmt.bind_text(2, password_hash);
+		stmt.step();
+
+		json::value jv_r = {{"success", true}};
+		res.result(http::status::ok);
+		res.body() = json::serialize(jv_r);
 	}
 	//catch
 
