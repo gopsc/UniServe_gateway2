@@ -7,6 +7,7 @@
 #include <iostream>
 #include <typeinfo>
 #include <memory>
+#include <csignal>
 #include <boost/json.hpp>
 #include <boost/program_options.hpp>
 #include <openssl/provider.h>
@@ -37,8 +38,28 @@ static std::string	_ADDR;
 static int		_PORT;
 static std::string	_DEFT_PATH;
 static std::string	_DB_PATH;
+static std::unique_ptr<HttpServer>		_SERVE;
 static std::unique_ptr<MyRSA::Generator>	_KEYGEN;
 static std::unique_ptr<Sqlite3>			_SQLDB;
+
+void signalHandler(int signum) {
+
+	std::cout << "Receive close signal, prepare to shutdown...\n";
+	if (_SERVE) {
+		_SERVE->stop();
+	}
+}
+
+void set_signal_action() {
+
+	struct sigaction sa;
+	sa.sa_handler = signalHandler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGINT, &sa, nullptr);
+	sigaction(SIGTERM, &sa, nullptr);
+}
+
 int main(int argc, char **argv) {
 	po::options_description desc("cpp language web gateway");
 	desc.add_options()
@@ -92,17 +113,17 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 		
-	HttpServer server(_ADDR, _PORT, 4);
-	registerRoutes(server);
-
-
+	_SERVE = std::make_unique<HttpServer> (_ADDR, _PORT, 4);
 	_KEYGEN = std::make_unique<MyRSA::Generator> ();
 	_SQLDB = std::make_unique<Sqlite3> (_DB_PATH);
 
 	db_init();
 
-	server.start();
-	server.run();
+	registerRoutes(*_SERVE);
+
+	set_signal_action();
+	_SERVE->start();
+	_SERVE->run();
 
 }
 
