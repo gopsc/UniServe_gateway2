@@ -1,9 +1,14 @@
 #include <us/HttpServer.hpp>
 #include <us/HttpClient.hpp>
+#include <us/MyRSA.hpp>
+#include <us/Base64.hpp>
+#include <us/SHA256.hpp>
 #include <iostream>
 #include <typeinfo>
+#include <memory>
 #include <boost/json.hpp>
 #include <boost/program_options.hpp>
+#include <openssl/provider.h>
 #include "Conf.hpp"
 
 using namespace pmc::net;
@@ -11,19 +16,26 @@ using namespace qing;
 namespace json = boost::json;
 namespace po = boost::program_options;
 
-constexpr const char *_VER = "0.2.0";
+constexpr const char *_VER = "0.2.1";
 
+/* http server operation */
 void registerRoutes(HttpServer &server);
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params,
 		const char *method);
+http::response<http::string_body> handleLogin(
+		const http::request<http::string_body>& req,
+		const std::unordered_map<std::string, std::string>& params);
+
+/**/
 bool is_special_header(const std::string &header);
 
 
 static std::string	_ADDR;
 static int		_PORT;
 static std::string	_DEFT_PATH;
+static std::unique_ptr<MyRSA::Generator>	_KEYGEN;
 int main(int argc, char **argv) {
 	po::options_description desc("cpp language web gateway");
 	desc.add_options()
@@ -78,22 +90,80 @@ int main(int argc, char **argv) {
 		
 	HttpServer server(_ADDR, _PORT, 4);
 	registerRoutes(server);
+
+	OSSL_PROVIDER *legacy = OSSL_PROVIDER_load(NULL, "legacy");
+	if (legacy == NULL) {
+		unsigned long err = ERR_get_error();
+		char err_buf[256];
+		ERR_error_string_n(err, err_buf, sizeof(err_buf));
+		std::cerr << "Failed to load legacy provider: " << err_buf << std::endl;
+		// 可能原因：模块未找到、路径不对、版本不兼容等
+	} else {
+		std::cout << "Legacy provider loaded successfully." << std::endl;
+		// 记住保存 legacy 指针，程序退出前调用 OSSL_PROVIDER_unload(legacy);
+	}
+
+	_KEYGEN = std::make_unique<MyRSA::Generator> ();
+
 	server.start();
 	server.run();
+
+	OSSL_PROVIDER_unload(legacy);
 }
 
 void registerRoutes(HttpServer &server) {
 
-	/* fixme: use origin target httppath */
+	server.post("/login", [](const auto& req, const auto& params) {
+		return handleLogin(req, params);
+	});
+
 	server.get("*", [](const auto& req, const auto& params) {
-		HttpServer::debug::print_all_header_fields(req);
 		return handleProxy(req, params, "get");
 	});
 
 	server.post("*", [](const auto& req, const auto& params) {
-		HttpServer::debug::print_all_header_fields(req);
 		return handleProxy(req, params, "post");
 	});
+}
+
+/* curl -X POST http://127.0.0.1:9201/login  */
+http::response<http::string_body> handleLogin(
+	const http::request<http::string_body>& req,
+	const std::unordered_map<std::string, std::string>& params)
+{
+	http::response<http::string_body> res;
+	res.version(req.version());
+
+	try {
+		auto _PRIV = MyRSA::Private_Key::from_pem(_KEYGEN->get_private_key_pem());
+		auto _PUBL = MyRSA::Public_Key::from_pem(_KEYGEN->get_public_key_pem());
+
+		std::string data;
+		std::string hash;
+		std::string sign;
+		std::string token;
+
+		data = "hello,world";
+		hash = SHA256::sha256(data);
+		sign = _PRIV.Sign(hash);
+
+		json::value jv = {{"user", data}, {"hash", hash}, {"sign", sign}};
+		token = Base64::base64_encode(json::serialize(jv));
+
+		res.result(http::status::ok);
+		res.body() = token;
+	}
+	//catch
+
+	catch (const std::exception& e) {
+		const auto& ti = typeid(e);
+		res.set(http::field::content_type, "text/plain");
+		res.result(http::status::internal_server_error);
+		res.body() = std::string("<") + ti.name() + "> " + e.what();
+	}
+
+	res.prepare_payload();
+	return res;
 }
 
 /* curl -H "Target-Url: https://www.baidu.com" http://127.0.0.1:9201 -X GET */
@@ -107,26 +177,43 @@ http::response<http::string_body> handleProxy(
 
 	try {
 
-		std::string url;
+		std::string url = "";
+		auto flag = false;
+		{
+			auto it = req.base().find("Target-Url");
+			if (it != req.base().end()) {
+				url = req["Target-Url"];
+			}
 
-		auto it = req.base().find("Target-Url");
-		if (it == req.base().end()) {
-			url = "";
-		}
-		else {
-			std::string url = req["Target-Url"];
+			it = req.base().find("target-url");
+			if (it != req.base().end()) {
+				url = req["target-url"];
+			}
+
+			if (url == "") {
+				url =  _DEFT_PATH;
+				flag = true;
+			}
+
+			url += "/";
+			url += req.target();
 		}
 
-		if (url == "") {
-			url =  _DEFT_PATH;
+		/* check auth */
+		std::string auth = "";
+		{
+			auto it = req.base().find("Authorization");
+			if (it != req.base().end()) {
+				std::string raw = req["Authorization"];
+				if (raw.substr(0, 7) == "Bearer ") {
+					auth = Base64::base64_decode_to_string(raw.substr(7, raw.size()-7));
+					std::cout << "auth data: " << auth  << std::endl;
+				}
+			}
 		}
-
-		url += "/";
-		url += req.target();
 
 		auto callback = [&res](const auto& ret) {
 			res.body() += ret;	// TODO: too big file
-			//res.body() += "\n";
 		};
 
 
@@ -138,7 +225,7 @@ http::response<http::string_body> handleProxy(
 			h += field.name_string();
 			h += ": ";
 			h += field.value();
-			client.set_header(h);	// FIXME: Content-Type should changed
+			client.set_header(h);
 		}
 
 
