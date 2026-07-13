@@ -124,22 +124,23 @@ http::response<http::string_body> handleLogin(
 
 	try {
 		auto _PRIV = MyRSA::Private_Key::from_pem(_KEYGEN->get_private_key_pem());
-		auto _PUBL = MyRSA::Public_Key::from_pem(_KEYGEN->get_public_key_pem());
 
-		std::string data;
-		std::string hash;
-		std::string sign;
-		std::string token;
+		std::string username = "hello, world";
+		int  created_at = 0;
+		int  keep_time  = 3600;	// second
 
-		data = "hello,world";
-		hash = SHA256::sha256(data);
-		sign = _PRIV.Sign(hash);
+		json::value jv = {
+			{"user", username},
+			{"created_at", created_at},
+			{"keep_time", keep_time}
+		};
 
-		json::value jv = {{"user", data}, {"hash", hash}, {"sign", sign}};
-		token = Base64::base64_encode(json::serialize(jv));
+		std::string data = json::serialize(jv);
+		std::string token = Base64::base64_encode(data);
+		std::string sign = _PRIV.Sign(data);
 
 		res.result(http::status::ok);
-		res.body() = token;
+		res.body() = token + "_" + sign;
 	}
 	//catch
 
@@ -164,6 +165,7 @@ http::response<http::string_body> handleProxy(
 	res.version(req.version());
 
 	try {
+		auto _PUBL = MyRSA::Public_Key::from_pem(_KEYGEN->get_public_key_pem());
 
 		std::string url = "";
 		auto flag = false;
@@ -194,7 +196,18 @@ http::response<http::string_body> handleProxy(
 			if (it != req.base().end()) {
 				std::string raw = req["Authorization"];
 				if (raw.substr(0, 7) == "Bearer ") {
-					auth = Base64::base64_decode_to_string(raw.substr(7, raw.size()-7));
+					raw = raw.substr(7, raw.size() - 7);
+					size_t idx  = raw.find("_");
+					if (idx == std::string::npos) {
+						throw std::runtime_error("Header 400 Bad Request");
+					}
+					std::string data = raw.substr(0, idx);
+					std::string sign = raw.substr(idx+1, raw.size()-idx-1);
+					std::cout << data << std::endl << std::endl << sign << std::endl;
+					auth = Base64::base64_decode_to_string(data);
+					if (!_PUBL.Verify(auth, sign)) {
+						throw std::runtime_error("Header 401 Unauthorized");
+					}
 					std::cout << "auth data: " << auth  << std::endl;
 				}
 			}
