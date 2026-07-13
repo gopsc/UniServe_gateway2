@@ -19,7 +19,7 @@ namespace po = boost::program_options;
 
 constexpr const char *_VER = "0.2.1";
 
-/* http server operation */
+void db_init();
 void registerRoutes(HttpServer &server);
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
@@ -99,10 +99,51 @@ int main(int argc, char **argv) {
 	_KEYGEN = std::make_unique<MyRSA::Generator> ();
 	_SQLDB = std::make_unique<Sqlite3> (_DB_PATH);
 
+	db_init();
+
 	server.start();
 	server.run();
 
 }
+
+void db_init() {
+
+	std::string sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Users'";
+
+	auto flag = false;
+	{
+		auto stmt = _SQLDB->stmt(sql);
+		if (stmt.step()) {
+			auto num = stmt.read_int(0);
+			if (num == 0) {
+				flag = true;
+			}
+		}
+	}
+
+	if (flag) {
+		std::cout << "Start database init..." << std::endl;
+		std::string sql_crtt = "-- create users table, username as email\n"
+			"CREATE TABLE Users (\n"
+				"id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+				"email TEXT UNIQUE NOT NULL,\n"
+				"password_hash TEXT NOT NULL,\n"
+				"create_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n"
+				"last_login DATETIME,\n"
+				"is_active BOOLEAN DEFAULT 1\n"
+			");\n\n"
+
+			"CREATE INDEX idx_users_email ON users(email);\n";
+
+		_SQLDB->exec(sql_crtt);
+	}
+
+	else {
+		std::cout << "The database already init" << std::endl;
+	}
+}
+
+
 
 void registerRoutes(HttpServer &server) {
 
