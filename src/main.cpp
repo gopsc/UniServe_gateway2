@@ -3,6 +3,7 @@
 #include <us/MyRSA.hpp>
 #include <us/Base64.hpp>
 #include <us/SHA256.hpp>
+#include <us/Sqlite3.hpp>
 #include <iostream>
 #include <typeinfo>
 #include <memory>
@@ -35,7 +36,9 @@ bool is_special_header(const std::string &header);
 static std::string	_ADDR;
 static int		_PORT;
 static std::string	_DEFT_PATH;
+static std::string	_DB_PATH;
 static std::unique_ptr<MyRSA::Generator>	_KEYGEN;
+static std::unique_ptr<Sqlite3>			_SQLDB;
 int main(int argc, char **argv) {
 	po::options_description desc("cpp language web gateway");
 	desc.add_options()
@@ -74,6 +77,7 @@ int main(int argc, char **argv) {
 			_ADDR = cf.get<std::string>("Server.address", "");
 			_PORT = cf.get<int> ("Server.port", -1);
 			_DEFT_PATH = cf.get<std::string>("Proxy.default", "");
+			_DB_PATH = cf.get<std::string>("Database.path", "");
 		}
 		catch (ConfIni::IniConfigureFileParseException &e) {
 			std::cerr << "ERROR: "  << e.what() << std::endl;
@@ -93,6 +97,7 @@ int main(int argc, char **argv) {
 
 
 	_KEYGEN = std::make_unique<MyRSA::Generator> ();
+	_SQLDB = std::make_unique<Sqlite3> (_DB_PATH);
 
 	server.start();
 	server.run();
