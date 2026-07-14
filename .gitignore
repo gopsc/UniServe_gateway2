@@ -1,5 +1,7 @@
 #PRJ
 *.db
+*.crt
+*.key
 
 # Prerequisites
 *.d

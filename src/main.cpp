@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 		
-	_SERVE = std::make_unique<HttpServer> (_ADDR, _PORT, 4);
+	_SERVE = std::make_unique<HttpServer> (_ADDR, _PORT, "server.crt", "server.key", 4);
 	_KEYGEN = std::make_unique<MyRSA::Generator> ();
 	_SQLDB = std::make_unique<Sqlite3> (_DB_PATH);
 
@@ -188,7 +188,7 @@ void registerRoutes(HttpServer &server) {
 	});
 }
 
-/* curl -X POST http://127.0.0.1:9201/login  */
+/* curl -X POST http://127.0.0.1:9201/login -d '{"username": "qing", "password": "12345678"}'  */
 http::response<http::string_body> handleLogin(
 	const http::request<http::string_body>& req,
 	const std::unordered_map<std::string, std::string>& params)
@@ -333,23 +333,24 @@ http::response<http::string_body> handleProxy(
 		std::string auth = "";
 		{
 			auto it = req.base().find("Authorization");
-			if (it != req.base().end()) {
-				std::string raw = req["Authorization"];
-				if (raw.substr(0, 7) == "Bearer ") {
-					raw = raw.substr(7, raw.size() - 7);
-					size_t idx  = raw.find("_");
-					if (idx == std::string::npos) {
-						throw std::runtime_error("Header 400 Bad Request");
-					}
-					std::string data = raw.substr(0, idx);
-					std::string sign = raw.substr(idx+1, raw.size()-idx-1);
-					std::cout << data << std::endl << std::endl << sign << std::endl;
-					auth = Base64::base64_decode_to_string(data);
-					if (!_PUBL.Verify(auth, sign)) {
-						throw std::runtime_error("Header 401 Unauthorized");
-					}
-					std::cout << "auth data: " << auth  << std::endl;
+			if (it == req.base().end() && !flag) {
+				throw std::runtime_error("401");
+			}
+			std::string raw = req["Authorization"];
+			if (raw.substr(0, 7) == "Bearer ") {
+				raw = raw.substr(7, raw.size() - 7);
+				size_t idx  = raw.find("_");
+				if (idx == std::string::npos) {
+					throw std::runtime_error("Header 400 Bad Request");
 				}
+				std::string data = raw.substr(0, idx);
+				std::string sign = raw.substr(idx+1, raw.size()-idx-1);
+				std::cout << data << std::endl << std::endl << sign << std::endl;
+				auth = Base64::base64_decode_to_string(data);
+				if (!_PUBL.Verify(auth, sign)) {
+					throw std::runtime_error("Header 401 Unauthorized");
+				}
+				std::cout << "auth data: " << auth  << std::endl;
 			}
 		}
 
