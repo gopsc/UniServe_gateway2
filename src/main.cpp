@@ -11,6 +11,7 @@
 #include <boost/json.hpp>
 #include <boost/program_options.hpp>
 #include <openssl/provider.h>
+#include "ExpBase.hpp"
 #include "Conf.hpp"
 
 using namespace pmc::net;
@@ -20,28 +21,66 @@ namespace po = boost::program_options;
 
 constexpr const char *_VER = "0.2.1";
 
+
+class DatabaseException: public ExceptionBase {
+public:
+	using ExceptionBase::ExceptionBase;
+
+	std::string build_message() const override {
+		return "[Database]" + ExceptionBase::build_message();
+	}
+};
+
+class HttpException: public ExceptionBase {
+public:
+	HttpException(int code, const std::string& msg,
+			int http_status, const std::string& url,
+			const std::source_location& loc = std::source_location::current())
+		: ExceptionBase(code, msg, loc)
+		, m_http_status(http_status)
+		, m_url(url) {}
+	std::string build_message() const override {
+		return "[Http]" + ExceptionBase::build_message();
+	}
+	int status() const {
+		return m_http_status;
+	}
+	const std::string& url() const {
+		return m_url;
+	}
+private:
+    int m_http_status;
+    std::string m_url;
+};
+
 void db_init();
 void registerRoutes(HttpServer &server);
+
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params,
-		const char *method);
+		const char *method
+);
+
 http::response<http::string_body> handleLogin(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params);
+
 http::response<http::string_body> handleRegister(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params);
 
 
-/**/
+/*  headers can't processed */
 bool is_special_header(const std::string &header);
 
-
+/* configure items */
 static std::string	_ADDR;
 static int		_PORT;
-static std::string	_DEFT_PATH;
+static std::string	_DEFT_URL;
 static std::string	_DB_PATH;
+
+/* instance items */
 static std::unique_ptr<HttpServer>		_SERVE;
 static std::unique_ptr<MyRSA::Generator>	_KEYGEN;
 static std::unique_ptr<Sqlite3>			_SQLDB;
@@ -72,6 +111,7 @@ int main(int argc, char **argv) {
 		("input,i", 	po::value<std::string>(),	"input a configure text file")
 	;
 	po::variables_map vm;
+	/* parse commandline params */
 	{
 		try {
 			po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -95,13 +135,14 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
+	/* parse configure file */
 	{
 		try {
 
 			ConfIni cf(vm["input"].as<std::string>());
 			_ADDR = cf.get<std::string>("Server.address", "");
 			_PORT = cf.get<int> ("Server.port", -1);
-			_DEFT_PATH = cf.get<std::string>("Proxy.default", "");
+			_DEFT_URL = cf.get<std::string>("Proxy.default", "");
 			_DB_PATH = cf.get<std::string>("Database.path", "");
 		}
 		catch (ConfIni::IniConfigureFileParseException &e) {
@@ -197,14 +238,24 @@ http::response<http::string_body> handleLogin(
 	res.version(req.version());
 
 	try {
-		auto jv = json::parse(req.body());
+		//std::cout << req.body() << std::endl;
+		json::value jv;
+		try {
+			jv = json::parse(req.body());
+		}
+		catch (const boost::wrapexcept<boost::system::system_error>& e) {
+			THROW_EX_CUSTOM(HttpException, 2001, "Invalid_json_Argument",
+                            400, "/login");
+		}
+
+		
 		if (!jv.is_object()) {
-			throw std::runtime_error("400");
+			THROW_EX_CUSTOM(HttpException, 2002, "Invalid_json_object_Argument",
+                            400, "/login");
 		}
 		auto& obj = jv.as_object();
 		auto username = std::string(obj.at("username").as_string());
 		auto password = std::string(obj.at("password").as_string());
-
 		auto password_hash = SHA256::sha256(password);
 
 		std::string sql = "SELECT COUNT(*) FROM Users WHERE email=? AND password_hash=?;";
@@ -216,7 +267,8 @@ http::response<http::string_body> handleLogin(
 		}
 
 		else {
-			throw std::runtime_error("401");
+			THROW_EX_CUSTOM(HttpException, 2101, "Invalid Username or Password",
+                            401, "/login");
 		}
 
 		auto _PRIV = MyRSA::Private_Key::from_pem(_KEYGEN->get_private_key_pem());
@@ -238,13 +290,26 @@ http::response<http::string_body> handleLogin(
 		res.result(http::status::ok);
 		res.body() = token + "_" + sign;
 	}
-	//catch
-
+	catch (const HttpException& e) {
+		
+		json::value jv_r = {
+			{"success", false},
+			{"message", e.what()}
+		};
+		res.set(http::field::content_type, "application/json");
+		res.result(e.status());
+		res.body() = json::serialize(jv_r);
+	}
 	catch (const std::exception& e) {
+
 		const auto& ti = typeid(e);
+		json::value jv_r = {
+			{"success", false},
+			{"message", std::string("<") + ti.name() + "> " + e.what()}
+		};
 		res.set(http::field::content_type, "text/plain");
 		res.result(http::status::internal_server_error);
-		res.body() = std::string("<") + ti.name() + "> " + e.what();
+		res.body() = json::serialize(jv_r);
 	}
 
 	res.prepare_payload();
@@ -321,7 +386,7 @@ http::response<http::string_body> handleProxy(
 			}
 
 			if (url == "") {
-				url =  _DEFT_PATH;
+				url =  _DEFT_URL;
 				flag = true;
 			}
 
@@ -345,7 +410,6 @@ http::response<http::string_body> handleProxy(
 				}
 				std::string data = raw.substr(0, idx);
 				std::string sign = raw.substr(idx+1, raw.size()-idx-1);
-				std::cout << data << std::endl << std::endl << sign << std::endl;
 				auth = Base64::base64_decode_to_string(data);
 				if (!_PUBL.Verify(auth, sign)) {
 					throw std::runtime_error("Header 401 Unauthorized");
@@ -391,7 +455,12 @@ http::response<http::string_body> handleProxy(
 		const auto& ti = typeid(e);
 		res.set(http::field::content_type, "text/plain");
 		res.result(http::status::internal_server_error);
-		res.body() = std::string("<") + ti.name() + "> " + e.what();
+		json::value jv_r = {
+			{"success", false},
+			{"err_name", ti.name()},
+			{"err_message", e.what()}
+		};
+		res.body() = json::serialize(jv_r);
 	}
 
 	res.prepare_payload();
@@ -404,3 +473,4 @@ bool is_special_header(const std::string &header) {
 	return  header == "Host" || header == "connection"
 		|| header == "Accept-Encoding";
 }
+
