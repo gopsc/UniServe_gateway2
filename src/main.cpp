@@ -287,6 +287,7 @@ http::response<http::string_body> handleLogin(
 		std::string token = Base64::base64_encode(data);
 		std::string sign = _PRIV.Sign(data);
 
+		res.set("Connection", "close");
 		res.result(http::status::ok);
 		res.body() = token + "_" + sign;
 	}
@@ -447,6 +448,7 @@ http::response<http::string_body> handleProxy(
 		for (const auto& pair: client.get_response_headers() ) {
 			res.set(pair.first, pair.second);
 		}
+		res.set("Connection", "close");
 		res.result(client.get_response_code());
 	}
 	//catch
