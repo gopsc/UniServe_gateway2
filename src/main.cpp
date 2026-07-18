@@ -84,6 +84,8 @@ static std::string	_ADDR;
 static int		_PORT;
 static std::string	_DEFT_URL;
 static std::string	_DB_PATH;
+static std::string	_DEFT_ADMIN_USER = "admin";
+static std::string	_DEFT_ADMIN_PASS = "44112233";
 
 /* instance items */
 static std::unique_ptr<HttpServer>		_SERVE;
@@ -163,7 +165,7 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 		
-	_SERVE = std::make_unique<HttpServer> (_ADDR, _PORT, "server.crt", "server.key", 4);
+	_SERVE = std::make_unique<HttpServer> (_ADDR, _PORT, "full_chain.crt", "server.key", 4);
 	_KEYGEN = std::make_unique<MyRSA::Generator> ();
 	_SQLDB = std::make_unique<Sqlite3> (_DB_PATH);
 
@@ -206,6 +208,20 @@ void db_init() {
 			"CREATE INDEX idx_users_email ON users(email);\n";
 
 		_SQLDB->exec(sql_crtt);
+
+		{
+			auto password_hash = SHA256::sha256(_DEFT_ADMIN_PASS);
+			std::cout << password_hash << std::endl;
+			std::string sql_crta = "INSERT INTO Users(email, password_hash, last_login) VALUES (?, ?, datetime('now', 'localtime'))";
+			auto stmt = _SQLDB->stmt(sql_crta);
+			stmt.bind_text(1, _DEFT_ADMIN_USER);
+			stmt.bind_text(2, password_hash);
+			if (stmt.step()) {
+				std::cout << stmt.read_text(1) << std::endl;
+			}
+		}
+
+		std::cout << "done" << std::endl;
 	}
 
 	else {
@@ -295,12 +311,13 @@ http::response<http::string_body> handleLogin(
 		auto username = std::string(obj.at("username").as_string());
 		auto password = std::string(obj.at("password").as_string());
 		auto password_hash = SHA256::sha256(password);
+		std::cout  << username << " " << password_hash << std::endl;
 
 		std::string sql = "SELECT COUNT(*) FROM Users WHERE email=? AND password_hash=?;";
 		auto stmt = _SQLDB->stmt(sql);
 		stmt.bind_text(1, username);
 		stmt.bind_text(2, password_hash);
-		if (stmt.step() and stmt.read_int(1) == 1) {
+		if (stmt.step() && stmt.read_int(0) == 1) {
 			//update
 		}
 
