@@ -56,6 +56,11 @@ private:
 void db_init();
 void registerRoutes(HttpServer &server);
 
+http::response<http::string_body> wrapperHttp(
+		const http::request<http::string_body>& req,
+		const std::unordered_map<std::string, std::string>& params,
+		HttpRequestHandler _main);
+
 http::response<http::string_body> handleProxy(
 		const http::request<http::string_body>& req,
 		const std::unordered_map<std::string, std::string>& params,
@@ -212,8 +217,15 @@ void db_init() {
 
 void registerRoutes(HttpServer &server) {
 
-	server.post("/login", [](const auto& req, const auto& params) {
-		return handleLogin(req, params);
+	server.post("/login", [](
+			const http::request<http::string_body>& req,
+			const std::unordered_map<std::string, std::string>& params
+	) -> http::response<http::string_body>  {
+		return wrapperHttp(req, params, [](
+				const auto& req, const auto& params
+		) {
+			return handleLogin(req, params);
+		});
 	});
 
 	server.post("/register", [](const auto& req, const auto& params) {
@@ -227,6 +239,32 @@ void registerRoutes(HttpServer &server) {
 	server.post("*", [](const auto& req, const auto& params) {
 		return handleProxy(req, params, "post");
 	});
+}
+
+http::response<http::string_body> wrapperHttp(
+		const http::request<http::string_body>& req,
+		const std::unordered_map<std::string, std::string>& params,
+		HttpRequestHandler _main)
+
+try {
+
+	return _main(req, params);
+}
+
+catch (const std::exception& e) {
+
+	http::response<http::string_body> res;
+	res.version(req.version());
+	const auto& ti = typeid(e);
+	json::value jv_r = {
+		{"success", false},
+		{"message", std::string("<") + ti.name() + "> " + e.what()}
+	};
+	res.set(http::field::content_type, "text/plain");
+	res.result(http::status::internal_server_error);
+	res.body() = json::serialize(jv_r);
+	res.prepare_payload();
+	return res;
 }
 
 /* curl -X POST http://127.0.0.1:9201/login -d '{"username": "qing", "password": "12345678"}'  */
@@ -262,7 +300,7 @@ http::response<http::string_body> handleLogin(
 		auto stmt = _SQLDB->stmt(sql);
 		stmt.bind_text(1, username);
 		stmt.bind_text(2, password_hash);
-		if (stmt.step()) {
+		if (stmt.step() and stmt.read_int(1) == 1) {
 			//update
 		}
 
@@ -291,6 +329,7 @@ http::response<http::string_body> handleLogin(
 		res.result(http::status::ok);
 		res.body() = token + "_" + sign;
 	}
+
 	catch (const HttpException& e) {
 		
 		json::value jv_r = {
@@ -299,17 +338,6 @@ http::response<http::string_body> handleLogin(
 		};
 		res.set(http::field::content_type, "application/json");
 		res.result(e.status());
-		res.body() = json::serialize(jv_r);
-	}
-	catch (const std::exception& e) {
-
-		const auto& ti = typeid(e);
-		json::value jv_r = {
-			{"success", false},
-			{"message", std::string("<") + ti.name() + "> " + e.what()}
-		};
-		res.set(http::field::content_type, "text/plain");
-		res.result(http::status::internal_server_error);
 		res.body() = json::serialize(jv_r);
 	}
 
